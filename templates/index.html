@@ -1,0 +1,337 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Carte OpenStreetMap</title>
+    
+    <link rel="stylesheet" href="https://unpkg.com/leaflet/dist/leaflet.css" />
+    <script src="https://unpkg.com/leaflet/dist/leaflet.js"></script>
+
+    <style>
+        html, body {
+            height: 100%;
+            margin: 0;
+        }
+        
+        #map {
+            width: 100%;
+            height: 100%;
+        }
+        
+        #saved-places, #navigation-controls {
+            position: absolute;
+            background: rgba(255, 255, 255, 0.9); 
+            border-radius: 8px; 
+            box-shadow: 0 2px 10px rgba(0, 0, 0, 0.2);
+            padding: 15px;
+            z-index: 1000;
+        }
+        
+        #saved-places {
+            top: 10px;
+            right: 10px;
+            max-width: 250px;
+        }
+        
+        #navigation-controls {
+            top: 120px;
+            left: 10px;
+            max-width: 200px;
+        }
+        
+        .point-inputs {
+            margin: 10px 0;
+        }
+        
+        .point-inputs label {
+            display: block;
+            margin-bottom: 5px;
+        }
+        
+        input[type="text"] {
+            width: calc(100% - 10px); 
+            padding: 5px; 
+            border: 1px solid #ccc;
+            border-radius: 4px;
+        }
+        
+        button {
+            background-color: #007BFF;
+            color: white;
+            border: none;
+            padding: 10px;
+            border-radius: 4px;
+            cursor: pointer;
+            margin: 5px 0;
+        }
+        
+        button:hover {
+            background-color: #0056b3;
+        }
+
+    </style>
+</head>
+<body>
+    <div id="map"></div>
+
+    <div id="saved-places">
+        <h3>Adresses sauvegardées</h3>
+        <ul id="places-list"></ul>
+    </div>
+    
+    <div id="navigation-controls">
+        <button id="route-btn" onclick="calculateRoute()">Tracer l'itinéraire</button>
+        <button id="reset-route-btn" onclick="resetRoute()">Annuler l'itinéraire</button>
+        <div class="point-inputs">
+            <label for="pointA">Départ (Point A):</label>
+            <input type="text" id="pointA" value="" readonly>
+        </div>
+        <div class="point-inputs">
+            <label for="pointB">Arrivée (Point B):</label>
+            <input type="text" id="pointB" value="" readonly>
+        </div>
+    </div>
+
+    <script>
+        let currentMarker;  
+        const map = L.map('map').setView([45.750000, 4.850000], 13);
+        
+        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+            attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
+        }).addTo(map);
+
+        function formatAddress(data) {
+            let address = data.address;
+            let name = data.name || ''; 
+            let formattedAddress = '';
+
+            if (name) {
+                formattedAddress += `${name}, `;
+            }
+
+            if (address.house_number) formattedAddress += address.house_number + ' ';
+            if (address.road) formattedAddress += address.road + ', ';
+            if (address.city) formattedAddress += address.city + ', ';
+            if (address.postcode) formattedAddress += address.postcode + ', ';
+            if (address.country) formattedAddress += address.country;
+
+            return formattedAddress;
+        }
+
+        map.on('click', function(e) {
+            const lat = e.latlng.lat;
+            const lon = e.latlng.lng;
+
+            getAddress(lat, lon);  
+        });
+
+        function openLabelPrompt(lat, lon, address) {
+            const label = prompt("Entrez un label pour cet emplacement :");
+            if (label) {
+                saveLocation(lat, lon, address, label);  
+            }
+        }
+        
+        function saveLocation(lat, lon, address, label) {
+            const data = {
+                label: label,
+                address: address,
+            };
+        
+            fetch('/api/save_place/', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'X-CSRFToken': getCookie('csrftoken') 
+                },
+                body: JSON.stringify(data),
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.status === 'success') {
+                    alert("Lieu enregistré avec succès !");
+                    loadSavedPlaces();
+                } else {
+                    alert("Erreur lors de l'enregistrement : " + data.message);
+                }
+            })
+            .catch(error => {
+                console.log('Erreur:', error);
+                alert("Une erreur est survenue lors de l'enregistrement.");
+            });
+        }
+
+
+        function getCookie(name) {
+            let cookieValue = null;
+            if (document.cookie && document.cookie !== '') {
+                const cookies = document.cookie.split(';');
+                for (let i = 0; i < cookies.length; i++) {
+                    const cookie = cookies[i].trim();
+                    if (cookie.substring(0, name.length + 1) === (name + '=')) {
+                        cookieValue = decodeURIComponent(cookie.substring(name.length + 1));
+                        break;
+                    }
+                }
+            }
+            return cookieValue;
+        }
+        
+        
+        function loadSavedPlaces() {
+            fetch('/api/get_saved_places/')
+            .then(response => response.json())
+            .then(data => {
+                const placesList = document.getElementById('places-list');
+                placesList.innerHTML = ''; 
+        
+                data.places.forEach(place => {
+                    const li = document.createElement('li');
+                    li.innerHTML = `<strong>${place.label}</strong><br>${place.address}`;
+                    placesList.appendChild(li);
+                });
+            })
+            .catch(error => {
+                console.log('Erreur lors du chargement des adresses sauvegardées:', error);
+            });
+        }
+
+        window.onload = function() {
+            loadSavedPlaces();
+        };
+        
+        let startMarker, endMarker;
+        let pointA, pointB;
+
+        function getAddress(lat, lon) {
+            const url = `https://nominatim.openstreetmap.org/reverse?format=jsonv2&lat=${lat}&lon=${lon}&addressdetails=1`;
+        
+            fetch(url)
+            .then(response => response.json())
+            .then(data => {
+                const shortAddress = formatAddress(data); 
+                const placeName = data.name || ''; 
+        
+                if (currentMarker) {
+                    map.removeLayer(currentMarker);
+                }
+        
+                currentMarker = L.marker([lat, lon]).addTo(map);
+        
+                let popupContent = `<b>${placeName}</b><br>${shortAddress}<br>`;
+                popupContent += `<button onclick="openLabelPrompt('${lat}', '${lon}', '${shortAddress}')">Enregistrer</button><br>`;
+                popupContent += `<button onclick="setPoint('A', ${lat}, ${lon})">Point A</button><br>`;
+                popupContent += `<button onclick="setPoint('B', ${lat}, ${lon})">Point B</button><br>`;
+        
+                currentMarker.bindPopup(popupContent).openPopup();
+            })
+            .catch(error => {
+                console.log('Erreur:', error);
+            });
+        }
+
+        function setPoint(pointType, lat, lon) {
+            if (pointType === 'A') {
+                pointA = `${lat}, ${lon}`; 
+                if (startMarker) {
+                    map.removeLayer(startMarker);
+                }
+                startMarker = L.marker([lat, lon]).addTo(map).bindPopup("Point de départ").openPopup();
+            } else if (pointType === 'B') {
+                pointB = `${lat}, ${lon}`; 
+                if (endMarker) {
+                    map.removeLayer(endMarker); 
+                }
+                endMarker = L.marker([lat, lon]).addTo(map).bindPopup("Point d'arrivée").openPopup();
+            }
+            document.getElementById('pointA').value = pointA ? pointA : '';
+            document.getElementById('pointB').value = pointB ? pointB : '';
+        }
+
+        function decodePolyline(encoded) {
+            let points = [];
+            let index = 0, len = encoded.length;
+            let lat = 0, lng = 0;
+        
+            while (index < len) {
+                let b, shift = 0, result = 0;
+                do {
+                    b = encoded.charCodeAt(index++) - 63;
+                    result |= (b & 0x1f) << shift;
+                    shift += 5;
+                } while (b >= 0x20);
+                const dlat = ((result & 1) ? ~(result >> 1) : (result >> 1)); 
+                lat += dlat;
+        
+                shift = 0;
+                result = 0;
+                do {
+                    b = encoded.charCodeAt(index++) - 63;
+                    result |= (b & 0x1f) << shift;
+                    shift += 5;
+                } while (b >= 0x20);
+                const dlng = ((result & 1) ? ~(result >> 1) : (result >> 1));
+                lng += dlng;
+                points.push([lat / 1e5, lng / 1e5]);
+            }
+            return points;
+        }
+        let routeLine;
+        
+        function calculateRoute() {
+            if (!startMarker || !endMarker) {
+                alert("Veuillez définir un point de départ et un point d'arrivée !");
+                return;
+            }
+        
+            const startLatLng = startMarker.getLatLng();
+            const endLatLng = endMarker.getLatLng();
+        
+            const osrmUrl = `http://router.project-osrm.org/route/v1/driving/${startLatLng.lng},${startLatLng.lat};${endLatLng.lng},${endLatLng.lat}?overview=full`;
+        
+            fetch(osrmUrl)
+            .then(response => response.json())
+            .then(data => {
+                if (data.routes && data.routes.length > 0) {
+                    const route = data.routes[0];
+                    const coordinates = decodePolyline(route.geometry);
+        
+                    if (routeLine) {
+                        map.removeLayer(routeLine);
+                    }
+        
+                    routeLine = L.polyline(coordinates.map(coord => [coord[0], coord[1]]), { color: 'blue' }).addTo(map);
+        
+                    map.fitBounds(routeLine.getBounds());
+                } else {
+                    alert("Aucun itinéraire trouvé.");
+                }
+            })
+            .catch(error => {
+                console.log('Erreur lors de la récupération de l\'itinéraire :', error);
+            });
+        }
+        
+        function resetRoute() {
+            if (routeLine) {
+                map.removeLayer(routeLine);
+                routeLine = null;
+            }
+        
+            document.getElementById('pointA').value = '';
+            document.getElementById('pointB').value = '';
+        
+            if (startMarker) {
+                map.removeLayer(startMarker);
+                startMarker = null; 
+            }
+            if (endMarker) {
+                map.removeLayer(endMarker);
+                endMarker = null;
+            }
+        }
+
+    </script>
+</body>
+</html>
