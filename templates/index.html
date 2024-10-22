@@ -288,7 +288,7 @@
             const startLatLng = startMarker.getLatLng();
             const endLatLng = endMarker.getLatLng();
         
-            const osrmUrl = `http://router.project-osrm.org/route/v1/driving/${startLatLng.lng},${startLatLng.lat};${endLatLng.lng},${endLatLng.lat}?overview=full`;
+            const osrmUrl = `https://router.project-osrm.org/route/v1/driving/${startLatLng.lng},${startLatLng.lat};${endLatLng.lng},${endLatLng.lat}?overview=full`;
         
             fetch(osrmUrl)
             .then(response => response.json())
